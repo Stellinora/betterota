@@ -1,8 +1,8 @@
 [prop]
 id = "betterota"
 name = "BetterOTA Root Keeper"
-version = "v0.1.0"
-versionCode = 1
+version = "v0.1.1"
+versionCode = 2
 author = "hiturf"
 description = "Fail-closed OTA root keeper for A/B devices: patches the inactive slot with KernelSU and abandons the update rather than losing root."
 updateJson = ""
