@@ -2,8 +2,10 @@
 
 export SKIPUNZIP=0
 
+BOTA_VERSION=$(sed -n 's/^version=//p' "$MODPATH/module.prop" 2>/dev/null | head -n1)
+
 ui_print "*******************************"
-ui_print " BetterOTA Root Keeper v0.1.0"
+ui_print " BetterOTA Root Keeper ${BOTA_VERSION}"
 ui_print "*******************************"
 
 if command -v set_perm_recursive >/dev/null 2>&1; then
@@ -11,6 +13,7 @@ if command -v set_perm_recursive >/dev/null 2>&1; then
   set_perm "$MODPATH/post-fs-data.sh" 0 0 0755
   set_perm "$MODPATH/service.sh" 0 0 0755
   set_perm "$MODPATH/boot-completed.sh" 0 0 0755
+  set_perm "$MODPATH/action.sh" 0 0 0755
   set_perm "$MODPATH/uninstall.sh" 0 0 0755
 fi
 
