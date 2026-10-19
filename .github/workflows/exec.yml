@@ -92,6 +92,13 @@ jobs:
             echo "KAM_RELEASE_TAG=${GITHUB_REF_NAME}" >> "$GITHUB_ENV"
           fi
 
+      - name: Export update metadata
+        if: ${{ inputs.release == true || github.ref_type == 'tag' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          kam export update dist/update.json
+
       - name: Create GitHub release
         if: ${{ inputs.release == true || github.ref_type == 'tag' }}
         shell: bash
