@@ -92,6 +92,30 @@ EOF
   chmod +x "$BIN/ksud"
 }
 
+set_bootctl_ok() {
+  cat > "$BIN/bootctl" <<EOF
+#!/bin/sh
+echo "bootctl \$*" >> "$TMP/bootctl.log"
+case "\$1" in
+  hal-info) exit 0 ;;
+  get-current-slot) echo 0; exit 0 ;;
+  get-active-boot-slot) echo 1; exit 0 ;;
+  set-active-boot-slot) exit 0 ;;
+esac
+exit 0
+EOF
+  chmod +x "$BIN/bootctl"
+}
+
+set_bootctl_fail() {
+  cat > "$BIN/bootctl" <<EOF
+#!/bin/sh
+echo "bootctl \$*" >> "$TMP/bootctl.log"
+exit 1
+EOF
+  chmod +x "$BIN/bootctl"
+}
+
 echo _a > "$TMP/slot"
 touch "$TMP/ota/payload.bin"
 
@@ -145,6 +169,32 @@ if grep -q 'set-active-boot-slot' "$TMP/bootctl.log" 2>/dev/null; then
 else
   fail "B: no active slot revert"
 fi
+
+set_ksud 1 "- Patch Error: flash failed"
+set_bootctl_fail
+reset_env
+run_daemon 5 >/dev/null 2>&1
+if grep -q 'trigger held paused\|daemon holding' "$TMP/betterota.log" 2>/dev/null; then
+  pass "D: abandon unavailable holds trigger paused"
+else
+  fail "D: hold not recorded"
+fi
+if grep -q 'ctl.stop' "$TMP/setprop.log" && ! grep -q 'ctl.start' "$TMP/setprop.log"; then
+  pass "D: trigger stopped and not resumed"
+else
+  fail "D: pause/resume state inconsistent"
+fi
+if [ "$(cat "$TMP/data/state/status" 2>/dev/null)" = "failed_paused" ]; then
+  pass "D: status failed_paused"
+else
+  fail "D: unexpected status"
+fi
+if [ -f "$TMP/data/state/cycle_failed" ]; then
+  pass "D: cycle_failed persisted"
+else
+  fail "D: cycle_failed not persisted"
+fi
+set_bootctl_ok
 
 if [ "$FAILED" -eq 0 ]; then
   echo "All tests passed."

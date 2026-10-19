@@ -50,15 +50,19 @@ bota_set_status() {
   bota_state_put status "$1"
 }
 
-bota_state_clear_outcome() {
+bota_state_clear_attempt() {
   rm -f "$BOTA_STATE_DIR"/stage1_downloaded \
         "$BOTA_STATE_DIR"/stage2_installed \
         "$BOTA_STATE_DIR"/manager_paused \
-        "$BOTA_STATE_DIR"/need_resume \
-        "$BOTA_STATE_DIR"/paused_services \
         "$BOTA_STATE_DIR"/patched \
         "$BOTA_STATE_DIR"/abandoned \
         "$BOTA_STATE_DIR"/cycle_failed 2>/dev/null
+}
+
+bota_state_clear_outcome() {
+  bota_state_clear_attempt
+  rm -f "$BOTA_STATE_DIR"/need_resume \
+        "$BOTA_STATE_DIR"/paused_services 2>/dev/null
 }
 
 bota_state_clear_cycle() {
@@ -197,7 +201,6 @@ bota_abandon_update() {
   _slot=$("$_bc" get-current-slot 2>/dev/null)
   [ -n "$_slot" ] || { bota_log "cannot read current slot; cannot abandon"; return 1; }
   "$_bc" set-active-boot-slot "$_slot" 2>/dev/null || { bota_log "set-active-boot-slot failed"; return 1; }
-  bota_ue --reset_status >/dev/null 2>&1
   bota_state_put last_abandon_epoch "$(date +%s 2>/dev/null)"
   bota_log "abandoned OTA: forced active slot back to $_slot"
   return 0

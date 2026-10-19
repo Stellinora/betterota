@@ -130,12 +130,11 @@ bota_decide() {
     bota_state_set abandoned
     bota_set_status abandoned
     bota_log "cycle abandoned to protect root; update discarded"
-    bota_resume_manager
     return 1
   fi
   bota_state_set cycle_failed
   bota_set_status failed_paused
-  bota_log "patch failed and abandon unavailable; trigger left paused"
+  bota_log "patch failed and abandon unavailable; trigger held paused"
   return 1
 }
 
@@ -154,6 +153,10 @@ bota_main() {
 
   while :; do
     bota_cooldown_wait
+    if bota_state_has need_resume; then
+      bota_resume_manager
+      bota_ue --reset_status >/dev/null 2>&1
+    fi
     bota_wait_stage1
     if [ "${BOTA_PAUSE_AT_STAGE1:-0}" = "1" ]; then
       bota_pause_manager
@@ -165,7 +168,11 @@ bota_main() {
       bota_log "daemon exit"
       exit 0
     fi
-    bota_state_clear_outcome
+    if bota_state_has cycle_failed; then
+      bota_log "daemon holding: reboot trigger left paused"
+      exit 0
+    fi
+    bota_state_clear_attempt
     bota_set_status cooldown
   done
 }
