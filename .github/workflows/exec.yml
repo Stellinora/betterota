@@ -78,11 +78,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          module_id="$(sed -n 's/^id[[:space:]]*=[[:space:]]*"\(.*\)"/\1/p' kam.toml | head -n1)"
-          test -n "$module_id"
-          test -f "dist/${module_id}.zip"
-          unzip -Z1 "dist/${module_id}.zip" | grep -Fx 'module.prop'
-          ! unzip -Z1 "dist/${module_id}.zip" | grep -E '(^|/)\.git($|/)'
+          zipfile="$(ls dist/*.zip | head -n1)"
+          test -n "$zipfile"
+          test -f "$zipfile"
+          unzip -Z1 "$zipfile" | grep -Fx 'module.prop'
+          ! unzip -Z1 "$zipfile" | grep -E '(^|/)\.git($|/)'
 
       - name: Resolve release tag
         if: ${{ inputs.release == true || github.ref_type == 'tag' }}
@@ -98,13 +98,17 @@ jobs:
         run: |
           set -euo pipefail
           kam export update dist/update.json
+          zipname="$(basename "$(ls dist/*.zip | head -n1)")"
+          sed -i "s#/download/[^/\"]*\.zip#/download/${zipname}#" dist/update.json
+          grep -q "/download/${zipname}\"" dist/update.json
 
       - name: Create GitHub release
         if: ${{ inputs.release == true || github.ref_type == 'tag' }}
         shell: bash
         run: |
           set -euo pipefail
-          args=(--all-assets)
+          release_title="$(sed -n 's/^version[[:space:]]*=[[:space:]]*"\(.*\)"/\1/p' kam.toml | head -n1)"
+          args=(--all-assets --title "$release_title")
           if [ "${{ inputs.prerelease }}" = "true" ]; then
             args+=(--prerelease)
           fi

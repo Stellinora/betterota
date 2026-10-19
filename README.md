@@ -33,7 +33,7 @@ This project is managed with [Kam](https://github.com/MemDeco-WG/Kam):
 ```bash
 kam check
 kam build
-kam install dist/betterota-1-v0.1.0.zip --manager KernelSU
+kam install dist/betterota-v0.1.3.zip --manager KernelSU
 ```
 
 ## Configuration

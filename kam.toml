@@ -1,8 +1,8 @@
 [prop]
 id = "betterota"
 name = "BetterOTA Root Keeper"
-version = "v0.1.2"
-versionCode = 3
+version = "v0.1.3"
+versionCode = 4
 author = "Stellinora"
 description = "Fail-closed OTA root keeper for A/B devices: patches the inactive slot with KernelSU and abandons the update rather than losing root."
 updateJson = "https://github.com/Stellinora/betterota/releases/latest/download/update.json"
@@ -18,7 +18,7 @@ module_type = "kam"
 [kam.build]
 source_dir = "src/betterota"
 target_dir = "dist"
-output_file = "{{id}}"
+output_file = "{{id}}-{{version}}"
 hooks_dir = "hooks"
 
 [mmrl.repo]
