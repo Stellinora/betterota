@@ -226,6 +226,7 @@ bota_dir_has_files() {
 
 bota_prop_match() {
   local _kv _k _v
+  # shellcheck disable=SC2086
   for _kv in $BOTA_STAGE2_PROPS; do
     _k=${_kv%%=*}
     _v=${_kv#*=}
@@ -236,6 +237,7 @@ bota_prop_match() {
 
 bota_setting_match() {
   local _kv _ns _rest _k _v
+  # shellcheck disable=SC2086
   for _kv in $BOTA_STAGE2_SETTINGS; do
     _ns=${_kv%%:*}
     _rest=${_kv#*:}
@@ -287,6 +289,40 @@ bota_detect_log() {
   bota_log "detect: sota=$_sota oplus_update=$_upd downloaded=$_dl detected=$_det ota_files=$_nf"
 }
 
+# Return a valid patch partition (or empty); log and ignore invalid values.
+bota_partition_or_empty() {
+  case "${BOTA_PATCH_PARTITION:-}" in
+    ""|init_boot|boot|vendor_boot) printf '%s' "${BOTA_PATCH_PARTITION:-}" ;;
+    *) bota_log "invalid BOTA_PATCH_PARTITION=${BOTA_PATCH_PARTITION}; ignoring" ;;
+  esac
+}
+
+# Serialize patch attempts between the daemon and the action button.
+bota_patch_lock_acquire() {
+  local _lock _pidfile _old
+  _lock="$BOTA_DATA_DIR/patch.lock"
+  _pidfile="$BOTA_DATA_DIR/patch.pid"
+  if mkdir "$_lock" 2>/dev/null; then
+    printf '%s' "$$" > "$_pidfile"
+    return 0
+  fi
+  _old=$(cat "$_pidfile" 2>/dev/null)
+  if [ -n "$_old" ] && kill -0 "$_old" 2>/dev/null; then
+    return 1
+  fi
+  rmdir "$_lock" 2>/dev/null
+  if mkdir "$_lock" 2>/dev/null; then
+    printf '%s' "$$" > "$_pidfile"
+    return 0
+  fi
+  return 1
+}
+
+bota_patch_lock_release() {
+  rm -f "$BOTA_DATA_DIR/patch.pid" 2>/dev/null
+  rmdir "$BOTA_DATA_DIR/patch.lock" 2>/dev/null
+}
+
 bota_lockdown_apply() {
   local _p _lvl
   [ "${BOTA_UPDATE_LOCKDOWN:-0}" != "0" ] || return 0
@@ -295,6 +331,7 @@ bota_lockdown_apply() {
   settings put global can_update_at_night 0 2>/dev/null
   bota_log "lockdown: settings applied (auto update off)"
   if [ "$_lvl" -ge 2 ] 2>/dev/null; then
+    # shellcheck disable=SC2086
     for _p in $BOTA_LOCKDOWN_APPS; do
       appops set "$_p" RUN_ANY_IN_BACKGROUND ignore 2>/dev/null
       appops set "$_p" RUN_IN_BACKGROUND ignore 2>/dev/null
@@ -309,5 +346,21 @@ bota_lockdown_apply() {
       bota_log "lockdown: freeze failed for $BOTA_LOCKDOWN_FREEZE_APP"
     fi
   fi
+  return 0
+}
+
+# Undo the appops restrictions and re-enable the frozen scheduler so an
+# uninstall does not leave the OEM updater crippled. System settings are left
+# as-is (they are user-facing toggles).
+bota_lockdown_restore() {
+  local _p
+  # shellcheck disable=SC2086
+  for _p in $BOTA_LOCKDOWN_APPS; do
+    appops set "$_p" RUN_ANY_IN_BACKGROUND default 2>/dev/null
+    appops set "$_p" RUN_IN_BACKGROUND default 2>/dev/null
+    appops set "$_p" SCHEDULE_EXACT_ALARM default 2>/dev/null
+  done
+  pm enable "$BOTA_LOCKDOWN_FREEZE_APP" >/dev/null 2>&1
+  bota_log "lockdown: restored appops and enabled $BOTA_LOCKDOWN_FREEZE_APP"
   return 0
 }

@@ -2,12 +2,17 @@
 
 Make system OTA updates more accommodating to rooted users.
 
-A fail-closed OTA root keeper for **A/B Android devices**. It patches the
-inactive slot with KernelSU (`ksud boot-patch --ota --flash`) after the update
-is installed, and if patching cannot be verified it **abandons the update rather
-than losing root**.
+An OTA root keeper for **A/B Android devices**. It patches the inactive slot
+with KernelSU (`ksud boot-patch --ota --flash`) after the update is installed.
 
-Root is the first priority; the update is best-effort.
+Two modes:
+
+- **fail-closed** (default): if patching cannot be verified it abandons the
+  update rather than losing root. Root is the first priority; the update is
+  best-effort.
+- **update-safe** (OnePlus/ColorOS, opt-in): cuts off automatic updates,
+  watches for a user-triggered update, and patches the inactive slot. It never
+  reverts slots or discards the update.
 
 ## What it does
 
@@ -33,7 +38,7 @@ This project is managed with [Kam](https://github.com/MemDeco-WG/Kam):
 ```bash
 kam check
 kam build
-kam install dist/betterota-v0.1.3.zip --manager KernelSU
+kam install dist/betterota-v0.2.0.zip --manager KernelSU
 ```
 
 ## Configuration
@@ -72,6 +77,7 @@ BOTA_OBSERVE_ONLY=1          # first OTA: log signals only; set 0 to auto-patch
 BOTA_PAYLOAD_DIRS="/data/ota_package/OTA"
 BOTA_STAGE2_SETTINGS="system:com.oplus.ota.downloaded_status=1"
 BOTA_STAGE2_DEBOUNCE=2
+BOTA_STAGE2_SETTLE=0          # extra wait after the signal is stable (seconds)
 BOTA_FAST_POLL=5
 # BOTA_PATCH_PARTITION=init_boot   # optional explicit partition
 ```

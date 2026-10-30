@@ -44,6 +44,9 @@ export BOTA_PAYLOAD_DIRS=${BOTA_PAYLOAD_DIRS:-"/data/ota_package/OTA"}
 export BOTA_STAGE2_PROPS=${BOTA_STAGE2_PROPS:-""}
 export BOTA_STAGE2_SETTINGS=${BOTA_STAGE2_SETTINGS:-"system:com.oplus.ota.downloaded_status=1"}
 export BOTA_STAGE2_DEBOUNCE=${BOTA_STAGE2_DEBOUNCE:-2}
+# Extra wait after a stable stage-2 signal before patching (0 = off). Useful
+# when the OEM keeps finalizing the payload for a while after the signal.
+export BOTA_STAGE2_SETTLE=${BOTA_STAGE2_SETTLE:-0}
 export BOTA_FAST_POLL=${BOTA_FAST_POLL:-5}
 
 # Logging: rotate the log at this size, and re-log the detect snapshot every
@@ -53,3 +56,5 @@ export BOTA_LOG_HEARTBEAT=${BOTA_LOG_HEARTBEAT:-60}
 
 # Optional explicit KernelSU patch partition (init_boot | boot | vendor_boot).
 export BOTA_PATCH_PARTITION=${BOTA_PATCH_PARTITION:-}
+# Wait this long before retrying after a failed patch attempt.
+export BOTA_SAFE_RETRY_DELAY=${BOTA_SAFE_RETRY_DELAY:-60}

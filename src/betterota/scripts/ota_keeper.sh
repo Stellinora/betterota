@@ -95,16 +95,21 @@ bota_wait_stage2() {
 }
 
 bota_do_patch() {
-  local _ksud _i _out _rc
+  local _ksud _i _out _rc _part
   bota_state_has patched && return 0
   _ksud=$(bota_find_ksud) || { bota_log "FATAL: ksud not found"; return 1; }
+  _part=$(bota_partition_or_empty)
+  if ! bota_patch_lock_acquire; then
+    bota_log "another patch is already running; skip"
+    return 1
+  fi
   _i=0
   while [ "$_i" -lt "${BOTA_PATCH_RETRIES:-3}" ]; do
     _i=$((_i + 1))
     bota_set_status patching
-    if [ -n "${BOTA_PATCH_PARTITION:-}" ]; then
-      bota_log "ksud boot-patch --ota --flash --partition $BOTA_PATCH_PARTITION (attempt $_i)"
-      _out=$("$_ksud" boot-patch --ota --flash --partition "$BOTA_PATCH_PARTITION" 2>&1)
+    if [ -n "$_part" ]; then
+      bota_log "ksud boot-patch --ota --flash --partition $_part (attempt $_i)"
+      _out=$("$_ksud" boot-patch --ota --flash --partition "$_part" 2>&1)
     else
       bota_log "ksud boot-patch --ota --flash (attempt $_i)"
       _out=$("$_ksud" boot-patch --ota --flash 2>&1)
@@ -114,11 +119,13 @@ bota_do_patch() {
     if [ "$_rc" -eq 0 ]; then
       bota_state_set patched
       bota_log "patch OK"
+      bota_patch_lock_release
       return 0
     fi
     bota_log "patch failed rc=$_rc"
     sleep "${BOTA_PATCH_RETRY_DELAY:-20}"
   done
+  bota_patch_lock_release
   return 1
 }
 
@@ -186,14 +193,15 @@ bota_main() {
 # the inactive slot. Never pauses services, never reverts slots, never resets
 # the update. Safe for a daily driver where the reboot is user-initiated.
 bota_main_safe() {
-  local _hits _max _poll _sig _last_sig _tick
+  local _hits _max _poll _sig _last_sig _tick _confirmed
   bota_acquire_lock || { bota_log "another daemon is running; exit"; exit 0; }
   bota_log "daemon start (update-safe) pid=$$ slot=$(bota_current_slot)"
 
   bota_normalize_on_boot
-  bota_lockdown_apply
 
   bota_is_ab || { bota_log "not an A/B device; exit"; exit 0; }
+
+  bota_lockdown_apply
 
   if bota_state_has patched; then
     bota_log "cycle already patched; daemon idle"
@@ -202,6 +210,7 @@ bota_main_safe() {
 
   _max=${BOTA_STAGE2_DEBOUNCE:-2}
   _hits=0
+  _confirmed=0
   _last_sig=""
   _tick=0
   bota_set_status watching
@@ -215,19 +224,30 @@ bota_main_safe() {
       _tick=0
     fi
     _tick=$((_tick + 1))
+
     if bota_stage2_signal; then
       _hits=$((_hits + 1))
     else
+      if [ "$_confirmed" = "1" ]; then
+        bota_log "stage2 signal cleared"
+      fi
       _hits=0
+      _confirmed=0
     fi
-    if [ "$_hits" -ge "$_max" ]; then
+
+    if [ "$_hits" -ge "$_max" ] && [ "$_confirmed" = "0" ]; then
+      _confirmed=1
       bota_log "stage2 candidate confirmed (hits=$_hits)"
       if [ "${BOTA_OBSERVE_ONLY:-0}" = "1" ]; then
         bota_log "OBSERVE ONLY: not patching; signals logged"
         bota_set_status observed_stage2
-        _hits=0
-        sleep "$_poll"
-        continue
+      fi
+    fi
+
+    if [ "$_confirmed" = "1" ] && [ "${BOTA_OBSERVE_ONLY:-0}" != "1" ]; then
+      if [ "${BOTA_STAGE2_SETTLE:-0}" -gt 0 ] 2>/dev/null; then
+        bota_log "stage2 settle: waiting ${BOTA_STAGE2_SETTLE}s before patch"
+        sleep "$BOTA_STAGE2_SETTLE"
       fi
       if bota_do_patch; then
         bota_state_put patched_at "$(date +%s 2>/dev/null)"
@@ -237,8 +257,12 @@ bota_main_safe() {
       fi
       bota_log "patch failed; keeping current slot and retrying (no revert/reset)"
       bota_set_status patch_failed_retrying
+      _confirmed=0
       _hits=0
+      sleep "${BOTA_SAFE_RETRY_DELAY:-60}"
+      continue
     fi
+
     sleep "$_poll"
   done
 }

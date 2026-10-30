@@ -100,6 +100,8 @@ run_daemon() {
     BOTA_STAGE2_PROPS="${BOTA_STAGE2_PROPS:-}" \
     BOTA_STAGE2_SETTINGS="${BOTA_STAGE2_SETTINGS:-system:com.oplus.ota.downloaded_status=1}" \
     BOTA_STAGE2_DEBOUNCE="${BOTA_STAGE2_DEBOUNCE:-2}" \
+    BOTA_STAGE2_SETTLE="${BOTA_STAGE2_SETTLE:-0}" \
+    BOTA_SAFE_RETRY_DELAY="${BOTA_SAFE_RETRY_DELAY:-0}" \
     BOTA_FAST_POLL="${BOTA_FAST_POLL:-1}" \
     BOTA_PATCH_PARTITION="${BOTA_PATCH_PARTITION:-}" \
     sh "$MOD/scripts/ota_keeper.sh"
@@ -114,7 +116,9 @@ reset_env() {
   : > "$TMP/settings.log"
   : > "$TMP/appops.log"
   : > "$TMP/pm.log"
+  : > "$TMP/ksud.log"
   rm -rf "$TMP/ota_dir"
+  rm -rf "$TMP/data/patch.lock" "$TMP/data/patch.pid"
   mkdir -p "$TMP/ota_dir"
   echo 0 > "$TMP/downloaded_status"
   echo 0 > "$TMP/detected_status"
@@ -125,6 +129,16 @@ set_ksud() {
 #!/bin/sh
 echo "$2"
 exit "$1"
+EOF
+  chmod +x "$BIN/ksud"
+}
+
+set_ksud_args() {
+  cat > "$BIN/ksud" <<EOF
+#!/bin/sh
+echo "ksud \$*" >> "$TMP/ksud.log"
+echo "- Done!"
+exit 0
 EOF
   chmod +x "$BIN/ksud"
 }
@@ -244,10 +258,11 @@ if BOTA_UPDATE_SAFE=1 BOTA_OBSERVE_ONLY=1 BOTA_STAGE2_DEBOUNCE=2 BOTA_FAST_POLL=
 else
   pass "E: observe daemon keeps watching"
 fi
-if grep -q 'OBSERVE ONLY' "$TMP/betterota.log" 2>/dev/null; then
-  pass "E: observe-only logged"
+_obs="$(grep -c 'OBSERVE ONLY' "$TMP/betterota.log" 2>/dev/null)"
+if [ "${_obs:-0}" -eq 1 ]; then
+  pass "E: observe-only logged once"
 else
-  fail "E: observe-only not logged"
+  fail "E: observe log count=${_obs:-0}"
 fi
 if [ ! -f "$TMP/data/state/patched" ]; then
   pass "E: observe did not patch"
@@ -296,6 +311,44 @@ if grep -q 'appops set com.oplus.romupdate RUN_ANY_IN_BACKGROUND ignore' "$TMP/a
   pass "G: appops background restriction"
 else
   fail "G: appops restriction missing"
+fi
+
+reset_env
+set_ksud_args
+echo payload > "$TMP/ota_dir/payload.bin"
+echo 1 > "$TMP/downloaded_status"
+BOTA_UPDATE_SAFE=1 BOTA_PATCH_PARTITION=init_boot BOTA_STAGE2_DEBOUNCE=2 BOTA_FAST_POLL=1 run_daemon 10 >/dev/null 2>&1 || true
+if grep -q -- 'boot-patch --ota --flash --partition init_boot' "$TMP/ksud.log" 2>/dev/null; then
+  pass "H: patch partition forwarded"
+else
+  fail "H: patch partition missing"
+fi
+
+reset_env
+set_ksud_args
+echo payload > "$TMP/ota_dir/payload.bin"
+echo 1 > "$TMP/downloaded_status"
+BOTA_UPDATE_SAFE=1 BOTA_PATCH_PARTITION=evil BOTA_STAGE2_DEBOUNCE=2 BOTA_FAST_POLL=1 run_daemon 10 >/dev/null 2>&1 || true
+if grep -q 'boot-patch --ota --flash' "$TMP/ksud.log" 2>/dev/null && ! grep -q -- '--partition' "$TMP/ksud.log" 2>/dev/null; then
+  pass "I: invalid partition ignored"
+else
+  fail "I: invalid partition handling wrong"
+fi
+
+reset_env
+(
+  export MODDIR="$MOD"
+  export BOTA_DATA_DIR="$TMP/data"
+  export BOTA_LOG_FILE="$TMP/betterota.log"
+  export BOTA_USER_CONFIG="$TMP/data/config.sh"
+  . "$MOD/scripts/common.sh"
+  bota_lockdown_restore
+) >/dev/null 2>&1
+if grep -q 'appops set com.oplus.romupdate RUN_ANY_IN_BACKGROUND default' "$TMP/appops.log" 2>/dev/null \
+   && grep -q 'pm enable com.oplus.romupdate' "$TMP/pm.log" 2>/dev/null; then
+  pass "J: lockdown restore resets appops and enables scheduler"
+else
+  fail "J: lockdown restore incomplete"
 fi
 
 if [ "$FAILED" -eq 0 ]; then
