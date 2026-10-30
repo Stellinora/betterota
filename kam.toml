@@ -1,10 +1,10 @@
 [prop]
 id = "betterota"
 name = "BetterOTA Root Keeper"
-version = "v0.1.3"
-versionCode = 4
+version = "v0.2.0"
+versionCode = 5
 author = "Stellinora"
-description = "Fail-closed OTA root keeper for A/B devices: patches the inactive slot with KernelSU and abandons the update rather than losing root."
+description = "OTA root keeper for A/B devices: patches the inactive slot with KernelSU, with fail-closed and update-safe (OnePlus) modes."
 updateJson = "https://github.com/Stellinora/betterota/releases/latest/download/update.json"
 metamodule = false
 

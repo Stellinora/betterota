@@ -2,6 +2,7 @@
 MODDIR=${0%/*}
 . "$MODDIR/scripts/common.sh"
 bota_mkdirs
+bota_lockdown_apply
 if bota_state_has abandoned; then
   bota_log "boot-completed: a previous OTA was abandoned to protect root"
 fi

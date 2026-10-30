@@ -9,10 +9,16 @@ fi
 [ -f "$BOTA_USER_CONFIG" ] && . "$BOTA_USER_CONFIG"
 
 bota_log() {
-  local _ts _msg
+  local _ts _msg _sz
   _ts=$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null)
   _msg="$_ts $*"
   mkdir -p "$BOTA_DATA_DIR" 2>/dev/null
+  if [ -f "$BOTA_LOG_FILE" ]; then
+    _sz=$(wc -c < "$BOTA_LOG_FILE" 2>/dev/null || echo 0)
+    if [ "$_sz" -gt "${BOTA_LOG_MAX_BYTES:-524288}" ] 2>/dev/null; then
+      mv -f "$BOTA_LOG_FILE" "$BOTA_LOG_FILE.1" 2>/dev/null
+    fi
+  fi
   printf '%s\n' "$_msg" >> "$BOTA_LOG_FILE" 2>/dev/null
   command -v log >/dev/null 2>&1 && log -t BetterOTA -p i "$*" 2>/dev/null
   return 0
@@ -203,5 +209,158 @@ bota_abandon_update() {
   "$_bc" set-active-boot-slot "$_slot" 2>/dev/null || { bota_log "set-active-boot-slot failed"; return 1; }
   bota_state_put last_abandon_epoch "$(date +%s 2>/dev/null)"
   bota_log "abandoned OTA: forced active slot back to $_slot"
+  return 0
+}
+
+# --- update-safe helpers (OnePlus / OEM App-driven OTA) ---------------------
+
+bota_dir_has_files() {
+  local _d _first
+  for _d in "$@"; do
+    [ -d "$_d" ] || continue
+    _first=$(find "$_d" -type f 2>/dev/null | head -n 1)
+    [ -n "$_first" ] && return 0
+  done
+  return 1
+}
+
+bota_prop_match() {
+  local _kv _k _v
+  # shellcheck disable=SC2086
+  for _kv in $BOTA_STAGE2_PROPS; do
+    _k=${_kv%%=*}
+    _v=${_kv#*=}
+    [ "$(getprop "$_k" 2>/dev/null)" = "$_v" ] || return 1
+  done
+  return 0
+}
+
+bota_setting_match() {
+  local _kv _ns _rest _k _v
+  # shellcheck disable=SC2086
+  for _kv in $BOTA_STAGE2_SETTINGS; do
+    _ns=${_kv%%:*}
+    _rest=${_kv#*:}
+    _k=${_rest%%=*}
+    _v=${_rest#*=}
+    [ "$(settings get "$_ns" "$_k" 2>/dev/null)" = "$_v" ] || return 1
+  done
+  return 0
+}
+
+# Returns 0 only when every configured signal group matches.
+bota_stage2_signal() {
+  local _any=0
+  if [ -n "${BOTA_STAGE2_PROPS:-}" ]; then
+    _any=1
+    bota_prop_match || return 1
+  fi
+  if [ -n "${BOTA_STAGE2_SETTINGS:-}" ]; then
+    _any=1
+    bota_setting_match || return 1
+  fi
+  if [ -n "${BOTA_PAYLOAD_DIRS:-}" ]; then
+    _any=1
+    # shellcheck disable=SC2086
+    bota_dir_has_files $BOTA_PAYLOAD_DIRS || return 1
+  fi
+  [ "$_any" = "1" ]
+}
+
+bota_signal_sig() {
+  local _nf
+  # shellcheck disable=SC2086
+  _nf=$(find ${BOTA_PAYLOAD_DIRS:-/data/ota_package/OTA} -type f 2>/dev/null | wc -l)
+  printf '%s|%s|%s|%s|%s\n' \
+    "$(getprop persist.sys.sota.state 2>/dev/null)" \
+    "$(getprop persist.vendor.oplus.update_status 2>/dev/null)" \
+    "$(settings get system com.oplus.ota.downloaded_status 2>/dev/null)" \
+    "$(settings get secure com.oplus.ota.detected_status 2>/dev/null)" \
+    "${_nf:-0}"
+}
+
+bota_detect_log() {
+  local _sig _sota _upd _dl _det _nf
+  _sig=$(bota_signal_sig)
+  _sota=${_sig%%|*}; _sig=${_sig#*|}
+  _upd=${_sig%%|*}; _sig=${_sig#*|}
+  _dl=${_sig%%|*}; _sig=${_sig#*|}
+  _det=${_sig%%|*}; _nf=${_sig#*|}
+  bota_log "detect: sota=$_sota oplus_update=$_upd downloaded=$_dl detected=$_det ota_files=$_nf"
+}
+
+# Return a valid patch partition (or empty); log and ignore invalid values.
+bota_partition_or_empty() {
+  case "${BOTA_PATCH_PARTITION:-}" in
+    ""|init_boot|boot|vendor_boot) printf '%s' "${BOTA_PATCH_PARTITION:-}" ;;
+    *) bota_log "invalid BOTA_PATCH_PARTITION=${BOTA_PATCH_PARTITION}; ignoring" ;;
+  esac
+}
+
+# Serialize patch attempts between the daemon and the action button.
+bota_patch_lock_acquire() {
+  local _lock _pidfile _old
+  _lock="$BOTA_DATA_DIR/patch.lock"
+  _pidfile="$BOTA_DATA_DIR/patch.pid"
+  if mkdir "$_lock" 2>/dev/null; then
+    printf '%s' "$$" > "$_pidfile"
+    return 0
+  fi
+  _old=$(cat "$_pidfile" 2>/dev/null)
+  if [ -n "$_old" ] && kill -0 "$_old" 2>/dev/null; then
+    return 1
+  fi
+  rmdir "$_lock" 2>/dev/null
+  if mkdir "$_lock" 2>/dev/null; then
+    printf '%s' "$$" > "$_pidfile"
+    return 0
+  fi
+  return 1
+}
+
+bota_patch_lock_release() {
+  rm -f "$BOTA_DATA_DIR/patch.pid" 2>/dev/null
+  rmdir "$BOTA_DATA_DIR/patch.lock" 2>/dev/null
+}
+
+bota_lockdown_apply() {
+  local _p _lvl
+  [ "${BOTA_UPDATE_LOCKDOWN:-0}" != "0" ] || return 0
+  _lvl=${BOTA_LOCKDOWN_LEVEL:-2}
+  settings put global ota_disable_automatic_update 1 2>/dev/null
+  settings put global can_update_at_night 0 2>/dev/null
+  bota_log "lockdown: settings applied (auto update off)"
+  if [ "$_lvl" -ge 2 ] 2>/dev/null; then
+    # shellcheck disable=SC2086
+    for _p in $BOTA_LOCKDOWN_APPS; do
+      appops set "$_p" RUN_ANY_IN_BACKGROUND ignore 2>/dev/null
+      appops set "$_p" RUN_IN_BACKGROUND ignore 2>/dev/null
+      appops set "$_p" SCHEDULE_EXACT_ALARM ignore 2>/dev/null
+      bota_log "lockdown: appops restricted $_p"
+    done
+  fi
+  if [ "$_lvl" -ge 3 ] 2>/dev/null; then
+    if pm disable-user --user 0 "$BOTA_LOCKDOWN_FREEZE_APP" >/dev/null 2>&1; then
+      bota_log "lockdown: frozen $BOTA_LOCKDOWN_FREEZE_APP"
+    else
+      bota_log "lockdown: freeze failed for $BOTA_LOCKDOWN_FREEZE_APP"
+    fi
+  fi
+  return 0
+}
+
+# Undo the appops restrictions and re-enable the frozen scheduler so an
+# uninstall does not leave the OEM updater crippled. System settings are left
+# as-is (they are user-facing toggles).
+bota_lockdown_restore() {
+  local _p
+  # shellcheck disable=SC2086
+  for _p in $BOTA_LOCKDOWN_APPS; do
+    appops set "$_p" RUN_ANY_IN_BACKGROUND default 2>/dev/null
+    appops set "$_p" RUN_IN_BACKGROUND default 2>/dev/null
+    appops set "$_p" SCHEDULE_EXACT_ALARM default 2>/dev/null
+  done
+  pm enable "$BOTA_LOCKDOWN_FREEZE_APP" >/dev/null 2>&1
+  bota_log "lockdown: restored appops and enabled $BOTA_LOCKDOWN_FREEZE_APP"
   return 0
 }
