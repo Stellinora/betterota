@@ -9,6 +9,9 @@
 /config.json
 /update.json
 
+# Local device analysis artifacts
+/oneplus-*.txt
+
 # Editor and OS noise
 .DS_Store
 Thumbs.db
